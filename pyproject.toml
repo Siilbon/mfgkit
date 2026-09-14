@@ -1,0 +1,30 @@
+[project]
+name = "mfgkit"
+version = "0.1.0"
+description = "A manufacturing toolkit for control-system data: Aspen IP21, DeltaV, Intellution, and ControlLogix."
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "pandas>=2.0",
+    "numpy",
+]
+
+[project.optional-dependencies]
+# The AspenTech SQLplus ODBC driver is Windows-only, so pyodbc is not a base
+# dependency -- mfgkit.deltav and mfgkit.plc must stay installable on macOS.
+aspen = ["pyodbc"]
+# Logic-graph construction and interactive plotting.
+graph = ["networkx>=3.0", "plotly"]
+excel = ["xlsxwriter", "openpyxl"]
+all = ["mfgkit[aspen,graph,excel]"]
+dev = ["mfgkit[graph,excel]", "pytest", "ipykernel"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mfgkit*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
