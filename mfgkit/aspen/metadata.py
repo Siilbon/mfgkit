@@ -9,6 +9,13 @@ from .helpers import _sanitize, _sanitize_field
 
 _SEARCHABLE_TABLES = frozenset({"IP_AnalogDef", "IP_DiscreteDef"})
 
+_IO_DEF_TABLES = frozenset({"IOGetDef", "IOGetHistDef"})
+
+# Searchable IO definition fields. "IO_VALUE_RECORD&&FLD" isn't a bare
+# identifier, so these are whitelisted and quoted rather than run through
+# _sanitize_field.
+_IO_DEF_FIELDS = frozenset({"NAME", "IO_TAGNAME", "IO_VALUE_RECORD&&FLD"})
+
 
 class MetadataMixin:
     """Search definition tables and run arbitrary SQLplus."""
@@ -60,6 +67,31 @@ class MetadataMixin:
             FROM {table}
             WHERE "IO_VALUE_RECORD&&FLD" LIKE '{record_pattern}'
               AND NAME LIKE '%{name_pattern}%'
+        """
+        return self._execute_df(sql_query)
+
+    def search_io_defs(
+        self,
+        pattern: str | None = None,
+        field: str = "IO_TAGNAME",
+        table: str = "IOGetDef",
+    ) -> pd.DataFrame:
+        """Search an IO transfer definition table by one field, DCS tag (``IO_TAGNAME``) by default.
+
+        ``field`` is one of ``NAME`` (the IO get record), ``IO_TAGNAME``, or
+        ``IO_VALUE_RECORD&&FLD`` (the IP21 record it writes). ``table`` is
+        ``IOGetDef`` or ``IOGetHistDef``. ``pattern`` is matched with a
+        substring LIKE; omit it to return every row.
+        """
+        if table not in _IO_DEF_TABLES:
+            raise ValueError(f"table must be one of {sorted(_IO_DEF_TABLES)}, got {table!r}")
+        if field not in _IO_DEF_FIELDS:
+            raise ValueError(f"field must be one of {sorted(_IO_DEF_FIELDS)}, got {field!r}")
+        pattern = _sanitize(pattern) if pattern else ""
+        sql_query = f"""
+            SELECT NAME, IO_TAGNAME, "IO_VALUE_RECORD&&FLD"
+            FROM {table}
+            WHERE "{field}" LIKE '%{pattern}%'
         """
         return self._execute_df(sql_query)
 

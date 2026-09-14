@@ -165,3 +165,38 @@ def test_search_tags_searches_a_chosen_field():
     sql = conn.executed[-1]
     assert "IP_DiscreteDef" in sql
     assert "IP_DESCRIPTION LIKE '%pump%'" in sql
+
+
+# --------------------------------------------------------------------------- #
+# search_io_defs
+# --------------------------------------------------------------------------- #
+
+def test_search_io_defs_defaults_to_dcs_tag_in_iogetdef():
+    ac, conn = make_conn()
+    conn.queue(["NAME", "IO_TAGNAME", "IO_VALUE_RECORD&&FLD"], [])
+    ac.search_io_defs("FT21001")
+    sql = conn.executed[-1]
+    assert "FROM IOGetDef" in sql
+    assert "\"IO_TAGNAME\" LIKE '%FT21001%'" in sql
+
+
+@pytest.mark.parametrize("field", ["NAME", "IO_TAGNAME", "IO_VALUE_RECORD&&FLD"])
+def test_search_io_defs_searches_each_allowed_field(field):
+    ac, conn = make_conn()
+    conn.queue(["NAME"], [])
+    ac.search_io_defs("FI", field=field, table="IOGetHistDef")
+    sql = conn.executed[-1]
+    assert "FROM IOGetHistDef" in sql
+    assert f"\"{field}\" LIKE '%FI%'" in sql
+
+
+def test_search_io_defs_rejects_unknown_table():
+    ac, _ = make_conn()
+    with pytest.raises(ValueError, match="table must be one of"):
+        ac.search_io_defs("FI", table="IP_AnalogDef; DROP TABLE X")
+
+
+def test_search_io_defs_rejects_unknown_field():
+    ac, _ = make_conn()
+    with pytest.raises(ValueError, match="field must be one of"):
+        ac.search_io_defs("FI", field='NAME" OR 1=1 --')
