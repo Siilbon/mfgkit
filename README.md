@@ -10,7 +10,8 @@ single source of truth instead of vendoring their own drifting copies.
 | `mfgkit.deltav`      | Emerson DeltaV DCS                        | Flat-file exports, FHX files              |
 | `mfgkit.intellution` | Intellution / iFIX HMI                    | Tag database and PowerTool exports        |
 | `mfgkit.plc`         | Allen-Bradley ControlLogix                | Tag CSVs, L5X rungs, logic graphs         |
-| `mfgkit.analysis`    | *system-agnostic*                         | Downtime flagging/masking, shared routines |
+| `mfgkit.eventlog`    | DeltaV Event Chronicle, iFIX alarm ODBC   | Alarm and event tables in SQL databases   |
+| `mfgkit.analysis`    | *system-agnostic*                         | Downtime, ISA-18.2 alarm performance, operator interventions |
 
 Shared parsing helpers live in `mfgkit.utils`.
 
@@ -29,6 +30,7 @@ AspenTech SQLplus driver are Windows-only, so they are **not** base dependencies
 | Extra   | Pulls in                | Needed for                                    |
 |---------|-------------------------|-----------------------------------------------|
 | `aspen` | `pyodbc`                | `mfgkit.aspen` live connections                |
+| `sql`   | `pyodbc`                | `mfgkit.eventlog` database connections          |
 | `graph` | `networkx`, `plotly`    | `mfgkit.plc.graph`, `deltav.em` SFC graphs     |
 | `excel` | `xlsxwriter`, `openpyxl`| `.to_excel()` on tags and rungs                |
 
@@ -186,6 +188,65 @@ downtime_summary(df['F42103_PV'], threshold=125)
 
 `contiguous_runs(mask)` is exposed separately — it yields `(start, end)` labels
 for each True run in any boolean Series, not just downtime.
+
+### Alarm and event logs
+
+DeltaV's Event Chronicle and iFIX's Alarm ODBC service log alarms and operator
+changes to SQL tables whose names vary by version and site setup, so
+`mfgkit.eventlog` maps them once instead of guessing. Use a read-only database
+account; every query is a parameterized `SELECT`, and table and column names
+from a mapping are validated before use.
+
+**1. Discover the tables** (lists event-like tables, their columns, a few sample
+rows and a suggested mapping):
+
+```bash
+python -m mfgkit.eventlog discover "DRIVER={ODBC Driver 18 for SQL Server};SERVER=APPSTATION\\SQLEXPRESS;DATABASE=...;Trusted_Connection=yes;TrustServerCertificate=yes;ApplicationIntent=ReadOnly" --out event_chronicle_schema.json
+```
+
+**2. Save and review a mapping** of normalized columns to the table's columns:
+
+```python
+from mfgkit.eventlog import EventLogMapping, suggest_mapping
+
+schema = json.load(open('event_chronicle_schema.json'))
+mapping = suggest_mapping(schema['dbo.Events']['columns'], 'dbo.Events')
+mapping.to_json('event_chronicle_mapping.json')   # check every column before relying on it
+```
+
+**3. Fetch normalized events** with an `event_type` of `alarm`, `return`, `ack`,
+`change`, `mode`, `config` or `other`:
+
+```python
+from mfgkit.deltav.events import EventChronicle
+from mfgkit.intellution.alarms import IfixAlarmLog
+
+mapping = EventLogMapping.from_json('event_chronicle_mapping.json')
+with EventChronicle(conn_str, mapping) as ec:
+    events = ec.fetch(start, end)
+```
+
+Event types come from regex rules over each row's category, state and
+description; `DELTAV_RULES` and `IFIX_RULES` are starting points, and a
+mapping's own `rules` (optionally aimed at one column, e.g.
+`["return", "^OK$", "state"]`) replace them. Check a day of results against the
+operator stations before trusting the classification.
+
+**4. Analyze:**
+
+```python
+from mfgkit.analysis import alarms, interventions
+
+alarms.alarm_kpis(events, start, end, operator_positions=3)   # rate, floods, top-10 share, chattering vs ISA-18.2
+alarms.floods(events)            # flood periods (>10 alarms in a 10-minute window)
+alarms.bad_actors(events, 10)    # most frequent alarms and their share
+interventions.intervention_summary(events, by=('area',), shift_starts=('06:00', '18:00'))
+interventions.top_modules(events, 10)       # loops operators adjust most
+interventions.manual_mode_changes(events)   # modules put in MAN, IMAN, LO or ROUT
+```
+
+Interventions are `change` and `mode` events by people; `system_users` (a regex)
+leaves out system, batch and sequence accounts, and should be tuned per site.
 
 ## Design notes
 

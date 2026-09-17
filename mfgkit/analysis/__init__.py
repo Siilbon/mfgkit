@@ -11,10 +11,13 @@ from .downtime import (
     flag_downtime,
     mask_downtime,
 )
+from . import alarms, interventions
 
 __all__ = [
     "contiguous_runs",
     "flag_downtime",
     "mask_downtime",
     "downtime_summary",
+    "alarms",
+    "interventions",
 ]
