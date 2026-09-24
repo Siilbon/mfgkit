@@ -17,6 +17,10 @@ Status
   ``status()``         connection health (cheap ping + structured result)
 - ``io_task_status()`` per-IO-task good/bad tag health from IOGetHistDef
 
+OPC UA
+------
+- ``opcua_node_ids()`` OPC UA node IDs for a field of each tag (used by IoTHub)
+
 Layout
 ------
 The package is split into focused modules, all re-exported here:
@@ -26,6 +30,7 @@ The package is split into focused modules, all re-exported here:
 - :mod:`aspen.health`     ``ConnStatus`` + health/live-value queries
 - :mod:`aspen.history`    HISTORY/AGGREGATES time-series queries
 - :mod:`aspen.metadata`   definition queries + the raw-``query`` escape hatch
+- :mod:`aspen.opcua`      OPC UA node ID lookup + ``encode_opcua_node_id``
 - :mod:`aspen.connection` the public ``AspenConn`` assembled from the above
 
 Testability
@@ -39,6 +44,7 @@ from __future__ import annotations
 
 from .connection import AspenConn
 from .health import ConnStatus
+from .opcua import encode_opcua_node_id
 from .helpers import (
     DBError,
     IP21_TS_FORMAT,
@@ -61,4 +67,5 @@ __all__ = [
     "_sanitize",
     "_sanitize_field",
     "_ts_literal",
+    "encode_opcua_node_id",
 ]
