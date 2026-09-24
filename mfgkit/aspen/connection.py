@@ -6,9 +6,10 @@ from .base import AspenConnBase
 from .health import HealthMixin
 from .history import HistoryMixin
 from .metadata import MetadataMixin
+from .opcua import OpcUaMixin
 
 
-class AspenConn(AspenConnBase, HealthMixin, HistoryMixin, MetadataMixin):
+class AspenConn(AspenConnBase, HealthMixin, HistoryMixin, MetadataMixin, OpcUaMixin):
     """Connection wrapper for an IP21 server via AspenTech SQLplus ODBC.
 
     The implementation is split across focused modules:
@@ -17,6 +18,7 @@ class AspenConn(AspenConnBase, HealthMixin, HistoryMixin, MetadataMixin):
     - :mod:`aspen.health`   ``status``/``is_alive``/``snapshot``/``io_task_status``
     - :mod:`aspen.history`  ``start_end``/``current``/``interpolated``/``aggregates``
     - :mod:`aspen.metadata` ``search_tags``/``ip_analog``/``iogethistdef``/``iogetdef``/``query``
+    - :mod:`aspen.opcua`    ``opcua_node_id``/``opcua_node_ids``
 
     Usage:
         with AspenConn("MYIP21HOST") as ip21:
