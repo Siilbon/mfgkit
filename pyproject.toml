@@ -13,10 +13,12 @@ dependencies = [
 # The AspenTech SQLplus ODBC driver is Windows-only, so pyodbc is not a base
 # dependency -- mfgkit.deltav and mfgkit.plc must stay installable on macOS.
 aspen = ["pyodbc"]
+# Event Chronicle and iFIX alarm databases over ODBC (mfgkit.eventlog).
+sql = ["pyodbc"]
 # Logic-graph construction and interactive plotting.
 graph = ["networkx>=3.0", "plotly"]
 excel = ["xlsxwriter", "openpyxl"]
-all = ["mfgkit[aspen,graph,excel]"]
+all = ["mfgkit[aspen,sql,graph,excel]"]
 dev = ["mfgkit[graph,excel]", "pytest", "ipykernel"]
 
 [build-system]
