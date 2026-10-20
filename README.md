@@ -207,6 +207,7 @@ python -m mfgkit.eventlog discover "DRIVER={ODBC Driver 18 for SQL Server};SERVE
 **2. Save and review a mapping** of normalized columns to the table's columns:
 
 ```python
+import json
 from mfgkit.eventlog import EventLogMapping, suggest_mapping
 
 schema = json.load(open('event_chronicle_schema.json'))
@@ -218,13 +219,21 @@ mapping.to_json('event_chronicle_mapping.json')   # check every column before re
 `change`, `mode`, `config` or `other`:
 
 ```python
+from mfgkit.eventlog import EventLogMapping
 from mfgkit.deltav.events import EventChronicle
-from mfgkit.intellution.alarms import IfixAlarmLog
+from mfgkit.intellution.alarms import IfixAlarmLog   # same interface for iFIX
 
 mapping = EventLogMapping.from_json('event_chronicle_mapping.json')
 with EventChronicle(conn_str, mapping) as ec:
-    events = ec.fetch(start, end)
+    events = ec.fetch(start, end)                     # start <= time < end
+    area_a = ec.fetch(start, end, area='AREA_A')      # filter on any mapped column
 ```
+
+Every frame has the same columns (`mfgkit.eventlog.OUTPUT_COLUMNS`): `time`,
+`source_type`, `category`, `state`, `area`, `node`, `unit`, `module`,
+`module_description`, `parameter`, `description`, `description2`, `value`,
+`previous_value`, `priority`, `user`, `event_type` and `source`. Columns the
+mapping doesn't cover are NA.
 
 Event types come from regex rules over each row's category, state and
 description; `DELTAV_RULES` and `IFIX_RULES` are starting points, and a
@@ -244,6 +253,10 @@ interventions.intervention_summary(events, by=('area',), shift_starts=('06:00', 
 interventions.top_modules(events, 10)       # loops operators adjust most
 interventions.manual_mode_changes(events)   # modules put in MAN, IMAN, LO or ROUT
 ```
+
+ISA-18.2 targets are per operator position. Rates are divided by
+`operator_positions`, but flood metrics can't be, so filter `events` to one
+console's areas before reading those.
 
 Interventions are `change` and `mode` events by people; `system_users` (a regex)
 leaves out system, batch and sequence accounts, and should be tuned per site.
