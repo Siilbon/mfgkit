@@ -229,6 +229,15 @@ with EventChronicle(conn_str, mapping) as ec:
     area_a = ec.fetch(start, end, area='AREA_A')      # filter on any mapped column
 ```
 
+Saved exports (CSV, or the tab-delimited files the event viewers export) give
+the same frame without a database; the mapping is guessed from the header
+unless you pass one:
+
+```python
+events = EventChronicle.read_export('chronicle_export.txt')
+events = IfixAlarmLog.read_export('fixalarms.csv', 'ifix_alarm_mapping.json')
+```
+
 Every frame has the same columns (`mfgkit.eventlog.OUTPUT_COLUMNS`): `time`,
 `source_type`, `category`, `state`, `area`, `node`, `unit`, `module`,
 `module_description`, `parameter`, `description`, `description2`, `value`,
@@ -238,8 +247,22 @@ mapping doesn't cover are NA.
 Event types come from regex rules over each row's category, state and
 description; `DELTAV_RULES` and `IFIX_RULES` are starting points, and a
 mapping's own `rules` (optionally aimed at one column, e.g.
-`["return", "^OK$", "state"]`) replace them. Check a day of results against the
-operator stations before trusting the classification.
+`["return", "^OK$", "state"]`, or several columns that must all match, e.g.
+`["return", {"source_type": "^ALARM$", "state": "^OK$"}]`) replace them. Check
+a day of results against the operator stations before trusting the
+classification.
+
+For DeltaV, alarm rows are then re-typed from each alarm's State history:
+priorities that need no acknowledgement log an alarm coming in as `ACT/ACK`,
+so `ACT/ACK` only counts as an `ack` right after `ACT/UNACK`.
+
+For iFIX, operator writes are `OPERATOR` rows whose tag is only in the message
+(`Fix32.NODE.TAG.F_CV set to 1 by STATION::USER`); `IfixAlarmLog` fills
+`module`, `parameter` and `value` from it. `EVENT` rows (tag value changes,
+including the echo of each write) are `other`. Writes to a site's own
+auto/manual tags can be counted as mode changes with a mapping rule such as
+`["mode", {"source_type": "^OPERATOR$", "module": "_AMC?$"}]` placed before the
+`change` rule.
 
 **4. Analyze:**
 

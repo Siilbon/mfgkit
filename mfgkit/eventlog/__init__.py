@@ -9,6 +9,7 @@ rows as one normalized frame with an ``event_type`` of ``alarm``, ``return``,
 - :mod:`eventlog.mapping`   normalized columns, mappings, ``suggest_mapping``
 - :mod:`eventlog.rules`     event-type classification and vendor rule sets
 - :mod:`eventlog.base`      the read-only ``EventLogConn`` reader
+- :mod:`eventlog.files`     the same normalized frame from exported CSV / tab files
 - :mod:`eventlog.discover`  find event tables in an unfamiliar database
 
 Vendor readers: ``mfgkit.deltav.events.EventChronicle`` and
@@ -20,8 +21,9 @@ from __future__ import annotations
 
 from .base import OUTPUT_COLUMNS, EventLogConn, build_query, normalize_events
 from .discover import discover
-from .mapping import EVENT_TYPES, NORMALIZED_COLUMNS, EventLogMapping, suggest_mapping
-from .rules import DELTAV_RULES, IFIX_RULES, classify
+from .files import read_event_file
+from .mapping import NORMALIZED_COLUMNS, EventLogMapping, suggest_mapping
+from .rules import DELTAV_RULES, EVENT_TYPES, IFIX_RULES, Rule, classify
 
 __all__ = [
     "DELTAV_RULES",
@@ -31,9 +33,11 @@ __all__ = [
     "IFIX_RULES",
     "NORMALIZED_COLUMNS",
     "OUTPUT_COLUMNS",
+    "Rule",
     "build_query",
     "classify",
     "discover",
     "normalize_events",
+    "read_event_file",
     "suggest_mapping",
 ]

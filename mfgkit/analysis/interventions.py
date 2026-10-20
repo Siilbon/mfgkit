@@ -14,7 +14,7 @@ import re
 import pandas as pd
 
 DEFAULT_SYSTEM_USERS = r"^(system|local system|nt authority\\.*|.*\$|batch.*|.*service.*|sfc.*|seq.*)$"
-MANUAL_MODES = ("MAN", "IMAN", "LO", "ROUT")
+MANUAL_MODES = ("MAN", "MANL", "IMAN", "LO", "ROUT")  # MANL is iFIX's manual
 
 
 def operator_actions(events: pd.DataFrame, system_users: str | None = DEFAULT_SYSTEM_USERS) -> pd.DataFrame:
@@ -102,7 +102,7 @@ def manual_mode_changes(
     modes=MANUAL_MODES,
     system_users: str | None = DEFAULT_SYSTEM_USERS,
 ) -> pd.DataFrame:
-    """Mode changes that put a module into one of ``modes`` (MAN, IMAN, LO, ROUT).
+    """Mode changes that put a module into one of ``modes`` (MAN, MANL, IMAN, LO, ROUT).
 
     The new mode is read from ``value``; rows without one fall back to the
     descriptions, which is less reliable ("from MAN to AUTO" also matches).

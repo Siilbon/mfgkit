@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .rules import ANY_TEXT, EVENT_TYPES, Rule, as_rule, rule_to_list
+
 # Columns every normalized event frame has, in order. Only ``time`` must be
 # mapped; the rest are filled with NA when a table has no equivalent.
 NORMALIZED_COLUMNS = (
@@ -36,9 +38,6 @@ NORMALIZED_COLUMNS = (
     "priority",
     "user",
 )
-
-# What classification assigns to each event (see :mod:`mfgkit.eventlog.rules`).
-EVENT_TYPES = ("alarm", "return", "ack", "change", "mode", "config", "other")
 
 # One identifier part: starts with a letter or underscore; may contain the
 # spaces, slashes, hyphens and # that Access-era tables use ("Date/Time").
@@ -63,17 +62,12 @@ def quote_table(name: str) -> str:
     return ".".join(f"[{p}]" for p in parts)
 
 
-def _check_rule(rule) -> tuple:
-    if not 2 <= len(rule) <= 3:
-        raise ValueError(f"A rule is [event_type, pattern] or [event_type, pattern, column]; got {rule!r}")
-    event_type, pattern, *rest = rule
-    column = rest[0] if rest else None
-    if event_type not in EVENT_TYPES:
-        raise ValueError(f"Rule event_type must be one of {EVENT_TYPES}; got {event_type!r}")
-    if column is not None and column not in NORMALIZED_COLUMNS:
-        raise ValueError(f"Rule column must be a normalized column; got {column!r}")
-    re.compile(pattern)  # fail now on a bad regex, not mid-fetch
-    return (event_type, pattern, column)
+def _check_rule(rule) -> Rule:
+    rule = as_rule(rule)
+    for column in rule.when:
+        if column != ANY_TEXT and column not in NORMALIZED_COLUMNS:
+            raise ValueError(f"Rule column must be a normalized column or {ANY_TEXT!r}; got {column!r}")
+    return rule
 
 
 @dataclass
@@ -84,13 +78,13 @@ class EventLogMapping:
         table: the source table, e.g. ``'dbo.Events'`` or ``'FIXALARMS'``.
         columns: normalized column -> source column. ``time`` is required.
         rules: optional classification rules that *replace* the reader's
-            defaults; each is ``[event_type, regex]`` or
-            ``[event_type, regex, normalized_column]``.
+            defaults, as :class:`~mfgkit.eventlog.rules.Rule` or its list
+            forms (see :mod:`mfgkit.eventlog.rules`).
     """
 
     table: str
     columns: dict[str, str]
-    rules: list[tuple] | None = field(default=None)
+    rules: list[Rule] | None = field(default=None)
 
     def __post_init__(self):
         quote_table(self.table)
@@ -112,7 +106,7 @@ class EventLogMapping:
     def to_dict(self) -> dict:
         d = {"table": self.table, "columns": dict(self.columns)}
         if self.rules is not None:
-            d["rules"] = [list(r[:2]) if r[2] is None else list(r) for r in self.rules]
+            d["rules"] = [rule_to_list(r) for r in self.rules]
         return d
 
     @classmethod
@@ -132,12 +126,12 @@ class EventLogMapping:
 # "Date_Time", "Date/Time" and "DATETIME" all match "datetime".
 _SYNONYMS = {
     "time": ["datetime", "almnativetimein", "nativetimein", "eventtime", "eventdatetime", "timestamp", "time"],
-    "source_type": ["eventtype", "almmsgtype", "msgtype", "type"],
+    "source_type": ["eventtype", "almmsgtype", "msgtype", "messagetype", "type"],
     "category": ["category", "eventcategory"],
     "state": ["state", "almalmstatus", "almstatus", "alarmstatus", "status"],
     "area": ["area", "plantarea", "almalmarea", "alarmarea"],
     "node": ["node", "nodename", "almlognodename", "almphyslnode", "station"],
-    "unit": ["unit", "unitname", "processunit"],  # not ALM_UNIT: that's engineering units
+    "unit": ["unit", "unitname", "processunit", "alarmunit"],  # not ALM_UNIT: that's engineering units
     "module": ["module", "modulename", "almtagname", "tagname", "tag"],
     "module_description": ["moduledescription", "moduledesc", "almtagdesc", "tagdescription", "tagdesc"],
     "parameter": ["parameter", "attribute", "param"],

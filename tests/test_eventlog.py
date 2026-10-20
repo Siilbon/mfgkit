@@ -177,20 +177,78 @@ def test_deltav_rules():
             "description": [None, None, None, None, None, "Download complete", "Node up"],
         }
     )
+    # ACT/ACK is an 'alarm' here; EventChronicle finds acks from each alarm's history.
     assert list(classify(df, DELTAV_RULES)) == [
-        "alarm", "ack", "return", "change", "mode", "config", "other",
+        "alarm", "alarm", "return", "change", "mode", "config", "other",
     ]
 
 
 def test_ifix_rules():
     df = pd.DataFrame(
         {
-            "source_type": ["ALARM", "ALARM", "ACK", "OPERATOR", "OPERATOR"],
-            "state": ["HIHI", "OK", "HIHI", None, None],
-            "description": ["Tank high high", "Tank high high", None, "FIC101 MODE set to MANL", "SP changed"],
+            "source_type": ["ALARM", "ALARM", "ACK", "OPERATOR", "OPERATOR", "OPERATOR", "EVENT", "NETWORK"],
+            "state": ["CFN", "OK", "HIHI", None, None, None, None, "OK"],
+            "description": [
+                "Tank high high", "Tank high high", None,
+                "[N1 ] Fix32.N1.FIC101.A_AUTO set to MANL by ST01::OPERATOR A",
+                "[N1 ] Fix32.N1.FIC101.F_CV set to 50 by ST01::OPERATOR A",
+                "ST02 VIEW logged in as Application User",
+                "UNIT 1 AUTO/MAN",
+                "Connection is established with node N2",
+            ],
         }
     )
-    assert list(classify(df, IFIX_RULES)) == ["alarm", "return", "ack", "mode", "change"]
+    assert list(classify(df, IFIX_RULES)) == [
+        "alarm", "return", "ack", "mode", "change", "other", "other", "other",
+    ]
+
+
+def test_dict_rule_needs_every_condition():
+    df = pd.DataFrame({"source_type": ["ALARM", "NETWORK"], "state": ["OK", "OK"]})
+    rules = [("return", {"source_type": "^ALARM$", "state": "^OK$"})]
+    assert list(classify(df, rules)) == ["return", "other"]
+    m = EventLogMapping("t", {"time": "T"}, rules=[["return", {"source_type": "^ALARM$", "state": "^OK$"}]])
+    assert EventLogMapping.from_dict(json.loads(json.dumps(m.to_dict()))) == m
+    with pytest.raises(ValueError):
+        EventLogMapping("t", {"time": "T"}, rules=[["return", {"nope": "x"}]])
+
+
+def test_suggest_mapping_ifix_alarm_odbc_layout():
+    columns = [
+        "DATETIME", "DATELAST", "TIMELAST", "NODE", "TAGNAME", "DESCRIPTION", "VALUE", "EGU",
+        "ALARMSTATUS", "MESSAGETYPE", "ALARMUNIT", "OPERATOR", "OPERATORNODE", "AREA",
+        "OPERATORAREA", "UniqueIdentifier",
+    ]
+    m = suggest_mapping(columns, "dbo.FIXALARMS")
+    assert m.columns["time"] == "DATETIME"
+    assert m.columns["source_type"] == "MESSAGETYPE"
+    assert m.columns["state"] == "ALARMSTATUS"
+    assert m.columns["module"] == "TAGNAME"
+    assert m.columns["unit"] == "ALARMUNIT"
+    assert m.columns["user"] == "OPERATOR"
+    assert "EGU" not in m.columns.values()
+
+
+def test_ifix_fetch_parses_operator_writes():
+    m = EventLogMapping(
+        "dbo.FIXALARMS",
+        {"time": "DATETIME", "source_type": "MESSAGETYPE", "state": "ALARMSTATUS", "node": "NODE",
+         "module": "TAGNAME", "description": "DESCRIPTION", "value": "VALUE", "user": "OPERATOR"},
+    )
+    cols = ["time", "source_type", "state", "node", "module", "description", "value", "user"]
+    pad = " " * 8
+    rows = [
+        (datetime(2026, 10, 20, 14, 26, 10), "OPERATOR   ", pad, "N1  ", pad,
+         "[N1      ] Fix32.N1.UNIT1_AMC.F_CV set to 0 by ST03::OPERATOR B1   ", pad, "OPB1   "),
+        (datetime(2026, 10, 20, 14, 26, 11), "EVENT", pad, "N1", "UNIT1_AMC", "UNIT 1 AUTO/MAN", "0", pad),
+        (datetime(2026, 10, 20, 14, 26, 14), "ALARM", "OK ", "N1", "XV200_A", "SUPPLY TK FWD", "OK", pad),
+    ]
+    conn = FakeConn(results=[(cols, rows)])
+    events = IfixAlarmLog("DSN=x", m, connect_fn=lambda: conn).fetch("2026-10-20", "2026-10-21")
+    assert list(events["event_type"]) == ["change", "other", "return"]
+    write = events.iloc[0]
+    assert (write["module"], write["parameter"], write["value"], write["user"]) == ("UNIT1_AMC", "F_CV", "0", "OPB1")
+    assert pd.isna(events.loc[1, "user"])  # blank padding becomes NA
 
 
 def test_classify_without_column_searches_combined_text_case_insensitively():
@@ -281,3 +339,90 @@ def test_cli_discover_writes_json(tmp_path, capsys):
     assert rc == 0
     assert "dbo.Journal" in json.loads(out.read_text())
     assert "dbo.Journal" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# DeltaV alarm state transitions and exported files
+# --------------------------------------------------------------------------- #
+
+def _alarm_rows(states, module="FIC101", parameter="HI_ALM"):
+    from mfgkit.deltav.events import alarm_transitions
+
+    df = pd.DataFrame(
+        {
+            "time": pd.date_range("2026-10-20", periods=len(states), freq="s"),
+            "module": module,
+            "parameter": parameter,
+            "state": states,
+            "event_type": classify(pd.DataFrame({"state": states}), DELTAV_RULES),
+        }
+    )
+    return list(alarm_transitions(df)["event_type"])
+
+
+def test_alarm_transitions_ack_required():
+    assert _alarm_rows(["ACT/UNACK", "ACT/ACK", "INACT/ACK"]) == ["alarm", "ack", "return"]
+    assert _alarm_rows(["ACT/UNACK", "INACT/UNACK", "INACT/ACK"]) == ["alarm", "return", "ack"]
+
+
+def test_alarm_transitions_no_ack_required_counts_every_activation():
+    # Advisory priorities come in already acknowledged.
+    states = ["ACT/ACK", "INACT/ACK", "ACT/ACK", "INACT/ACK"]
+    assert _alarm_rows(states) == ["alarm", "return", "alarm", "return"]
+
+
+def test_alarm_transitions_follow_each_alarm_separately():
+    from mfgkit.deltav.events import alarm_transitions
+
+    df = pd.DataFrame(
+        {
+            "module": ["A", "B", "A", "B"],
+            "parameter": ["HI_ALM"] * 4,
+            "state": ["ACT/UNACK", "INACT/ACK", "ACT/ACK", "ACT/ACK"],
+            "event_type": ["alarm", "return", "ack", "ack"],
+        }
+    )
+    assert list(alarm_transitions(df)["event_type"]) == ["alarm", "return", "ack", "alarm"]
+
+
+DELTAV_EXPORT = (
+    "Date/Time*\tEvent Type*\tCategory*\tArea\tNode\tUnit\tModule\tModule Description\t"
+    "Parameter\tState\tLevel\tDesc1\tDesc2\n"
+    "1\t10/20/2026 2:13:05.693 PM\tALARM\tSYSTEM\tAREA_B\tCP02\t\tPDI400\tCollector dP\t"
+    "ALARM1\tINACT/ACK\tADVISORY\tANY\tAny Alarm Value %P1\n"
+    "2\t10/20/2026 2:13:03.305 PM\tALARM\tPROCESS\tAREA_A\tCP01\tSILOS\tLI500\tSILO LEVEL\t"
+    "HI_ALM\tACT/UNACK\tWARNING\tHIGH\tHigh Alarm Value 90.1341 Limit 90\n"
+    "3\t10/20/2026 2:13:01.693 PM\tALARM\tSYSTEM\tAREA_B\tCP02\t\tPDI400\tCollector dP\t"
+    "ALARM1\tACT/ACK\tADVISORY\tANY\tAny Alarm Value %P1\n"
+)
+
+
+def test_deltav_read_export(tmp_path):
+    path = tmp_path / "chronicle.txt"
+    path.write_text(DELTAV_EXPORT, encoding="utf-8")
+    events = EventChronicle.read_export(path)
+    assert list(events.columns) == list(OUTPUT_COLUMNS)
+    assert list(events["time"]) == [
+        pd.Timestamp("2026-10-20 14:13:01.693"),
+        pd.Timestamp("2026-10-20 14:13:03.305"),
+        pd.Timestamp("2026-10-20 14:13:05.693"),
+    ]
+    assert list(events["module"]) == ["PDI400", "LI500", "PDI400"]
+    assert list(events["event_type"]) == ["alarm", "alarm", "return"]
+    assert list(events["priority"]) == ["ADVISORY", "WARNING", "ADVISORY"]
+    assert pd.isna(events.loc[0, "unit"])
+    assert (events["source"] == "deltav").all()
+
+
+def test_ifix_read_export_treats_null_text_as_blank(tmp_path):
+    path = tmp_path / "fixalarms.csv"
+    path.write_text(
+        "DATETIME,NODE,TAGNAME,DESCRIPTION,VALUE,ALARMSTATUS,MESSAGETYPE,OPERATOR\n"
+        "2026-10-20 14:24:47.770,N1,,[N1 ] Fix32.N1.LIC300_IVP.F_CV set to 100 by ST04::OPERATOR A1,,,OPERATOR,OPA1\n"
+        "2026-10-20 14:24:47.000,NULL,LIC300_IVP,EVAP STEAM,100,NULL,NULL,OPA1\n",
+        encoding="utf-8",
+    )
+    events = IfixAlarmLog.read_export(path)
+    assert list(events["event_type"]) == ["other", "change"]
+    assert events.loc[1, "module"] == "LIC300_IVP"
+    assert pd.isna(events.loc[0, "source_type"])
