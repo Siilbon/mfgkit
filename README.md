@@ -10,7 +10,8 @@ single source of truth instead of vendoring their own drifting copies.
 | `mfgkit.deltav`      | Emerson DeltaV DCS                        | Flat-file exports, FHX files              |
 | `mfgkit.intellution` | Intellution / iFIX HMI                    | Tag database and PowerTool exports        |
 | `mfgkit.plc`         | Allen-Bradley ControlLogix                | Tag CSVs, L5X rungs, logic graphs         |
-| `mfgkit.analysis`    | *system-agnostic*                         | Downtime flagging/masking, shared routines |
+| `mfgkit.eventlog`    | DeltaV Event Chronicle, iFIX alarm ODBC   | Alarm and event tables in SQL databases   |
+| `mfgkit.analysis`    | *system-agnostic*                         | Downtime, ISA-18.2 alarm performance, operator interventions |
 
 Shared parsing helpers live in `mfgkit.utils`.
 
@@ -29,6 +30,7 @@ AspenTech SQLplus driver are Windows-only, so they are **not** base dependencies
 | Extra   | Pulls in                | Needed for                                    |
 |---------|-------------------------|-----------------------------------------------|
 | `aspen` | `pyodbc`                | `mfgkit.aspen` live connections                |
+| `sql`   | `pyodbc`                | `mfgkit.eventlog` database connections          |
 | `graph` | `networkx`, `plotly`    | `mfgkit.plc.graph`, `deltav.em` SFC graphs     |
 | `excel` | `xlsxwriter`, `openpyxl`| `.to_excel()` on tags and rungs                |
 
@@ -186,6 +188,101 @@ downtime_summary(df['F42103_PV'], threshold=125)
 
 `contiguous_runs(mask)` is exposed separately — it yields `(start, end)` labels
 for each True run in any boolean Series, not just downtime.
+
+### Alarm and event logs
+
+DeltaV's Event Chronicle and iFIX's Alarm ODBC service log alarms and operator
+changes to SQL tables whose names vary by version and site setup, so
+`mfgkit.eventlog` maps them once instead of guessing. Use a read-only database
+account; every query is a parameterized `SELECT`, and table and column names
+from a mapping are validated before use.
+
+**1. Discover the tables** (lists event-like tables, their columns, a few sample
+rows and a suggested mapping):
+
+```bash
+python -m mfgkit.eventlog discover "DRIVER={ODBC Driver 18 for SQL Server};SERVER=APPSTATION\\SQLEXPRESS;DATABASE=...;Trusted_Connection=yes;TrustServerCertificate=yes;ApplicationIntent=ReadOnly" --out event_chronicle_schema.json
+```
+
+**2. Save and review a mapping** of normalized columns to the table's columns:
+
+```python
+import json
+from mfgkit.eventlog import EventLogMapping, suggest_mapping
+
+schema = json.load(open('event_chronicle_schema.json'))
+mapping = suggest_mapping(schema['dbo.Events']['columns'], 'dbo.Events')
+mapping.to_json('event_chronicle_mapping.json')   # check every column before relying on it
+```
+
+**3. Fetch normalized events** with an `event_type` of `alarm`, `return`, `ack`,
+`change`, `mode`, `config` or `other`:
+
+```python
+from mfgkit.eventlog import EventLogMapping
+from mfgkit.deltav.events import EventChronicle
+from mfgkit.intellution.alarms import IfixAlarmLog   # same interface for iFIX
+
+mapping = EventLogMapping.from_json('event_chronicle_mapping.json')
+with EventChronicle(conn_str, mapping) as ec:
+    events = ec.fetch(start, end)                     # start <= time < end
+    area_a = ec.fetch(start, end, area='AREA_A')      # filter on any mapped column
+```
+
+Saved exports (CSV, or the tab-delimited files the event viewers export) give
+the same frame without a database; the mapping is guessed from the header
+unless you pass one:
+
+```python
+events = EventChronicle.read_export('chronicle_export.txt')
+events = IfixAlarmLog.read_export('fixalarms.csv', 'ifix_alarm_mapping.json')
+```
+
+Every frame has the same columns (`mfgkit.eventlog.OUTPUT_COLUMNS`): `time`,
+`source_type`, `category`, `state`, `area`, `node`, `unit`, `module`,
+`module_description`, `parameter`, `description`, `description2`, `value`,
+`previous_value`, `priority`, `user`, `event_type` and `source`. Columns the
+mapping doesn't cover are NA.
+
+Event types come from regex rules over each row's category, state and
+description; `DELTAV_RULES` and `IFIX_RULES` are starting points, and a
+mapping's own `rules` (optionally aimed at one column, e.g.
+`["return", "^OK$", "state"]`, or several columns that must all match, e.g.
+`["return", {"source_type": "^ALARM$", "state": "^OK$"}]`) replace them. Check
+a day of results against the operator stations before trusting the
+classification.
+
+For DeltaV, alarm rows are then re-typed from each alarm's State history:
+priorities that need no acknowledgement log an alarm coming in as `ACT/ACK`,
+so `ACT/ACK` only counts as an `ack` right after `ACT/UNACK`.
+
+For iFIX, operator writes are `OPERATOR` rows whose tag is only in the message
+(`Fix32.NODE.TAG.F_CV set to 1 by STATION::USER`); `IfixAlarmLog` fills
+`module`, `parameter` and `value` from it. `EVENT` rows (tag value changes,
+including the echo of each write) are `other`. Writes to a site's own
+auto/manual tags can be counted as mode changes with a mapping rule such as
+`["mode", {"source_type": "^OPERATOR$", "module": "_AMC?$"}]` placed before the
+`change` rule.
+
+**4. Analyze:**
+
+```python
+from mfgkit.analysis import alarms, interventions
+
+alarms.alarm_kpis(events, start, end, operator_positions=3)   # rate, floods, top-10 share, chattering vs ISA-18.2
+alarms.floods(events)            # flood periods (>10 alarms in a 10-minute window)
+alarms.bad_actors(events, 10)    # most frequent alarms and their share
+interventions.intervention_summary(events, by=('area',), shift_starts=('06:00', '18:00'))
+interventions.top_modules(events, 10)       # loops operators adjust most
+interventions.manual_mode_changes(events)   # modules put in MAN, IMAN, LO or ROUT
+```
+
+ISA-18.2 targets are per operator position. Rates are divided by
+`operator_positions`, but flood metrics can't be, so filter `events` to one
+console's areas before reading those.
+
+Interventions are `change` and `mode` events by people; `system_users` (a regex)
+leaves out system, batch and sequence accounts, and should be tuned per site.
 
 ## Design notes
 
