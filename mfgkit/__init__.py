@@ -7,9 +7,10 @@ Subpackages, one per vendor system:
 - :mod:`mfgkit.intellution` Intellution / iFIX HMI tag databases
 - :mod:`mfgkit.plc`         Allen-Bradley ControlLogix tags, rungs, logic graphs
 
-Plus system-agnostic analysis helpers:
+Plus system-agnostic helpers:
 
-- :mod:`mfgkit.analysis`    downtime flagging/masking and other shared routines
+- :mod:`mfgkit.eventlog`    alarm and event logs in SQL databases (DeltaV Event Chronicle, iFIX alarm ODBC)
+- :mod:`mfgkit.analysis`    downtime, ISA-18.2 alarm performance and operator interventions
 
 Shared parsing helpers live in :mod:`mfgkit.utils`.
 
@@ -29,7 +30,7 @@ import importlib
 
 __version__ = "0.1.0"
 
-_SUBPACKAGES = ("analysis", "aspen", "deltav", "intellution", "plc", "utils")
+_SUBPACKAGES = ("analysis", "aspen", "deltav", "eventlog", "intellution", "plc", "utils")
 
 __all__ = [*_SUBPACKAGES, "__version__"]
 

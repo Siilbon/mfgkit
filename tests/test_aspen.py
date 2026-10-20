@@ -232,7 +232,7 @@ class TestHistory(unittest.TestCase):
         self.assertEqual(set(df.columns), {"FI-101.PV", "TI-202.PV"})
         self.assertTrue(df.index.is_monotonic_increasing)
         sql = conn.executed[-1]
-        self.assertIn("REQUEST = 1", sql)
+        self.assertIn("REQUEST = 4", sql)  # actual recorded data
         self.assertIn("TIMESTAMP'2026-06-11 08:00:00'", sql)
 
     def test_history_empty(self):

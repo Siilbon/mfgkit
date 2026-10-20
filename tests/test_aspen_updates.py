@@ -143,6 +143,109 @@ def test_max_rows_truncation_warns(caplog):
 
 
 # --------------------------------------------------------------------------- #
+# stepped / as_int (discrete tags that only hold whole numbers)
+# --------------------------------------------------------------------------- #
+
+def test_interpolated_is_not_stepped_by_default():
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [])
+    ac.interpolated(["XV-101.STATE"], "2026-06-11 08:00", "2026-06-11 09:00")
+    assert "STEPPED" not in conn.executed[-1]
+
+
+def test_interpolated_stepped_adds_clause_to_every_chunk():
+    ac, conn = make_conn()
+    for _ in range(2):
+        conn.queue(_history_desc(), [])
+    ac.interpolated(["XV-101.STATE"], "2026-01-01", "2026-03-02",
+                    chunk_days=30, stepped=True)
+    history_queries = [q for q in conn.executed if "FROM HISTORY" in q]
+    assert len(history_queries) == 2
+    assert all("STEPPED = 1" in q for q in history_queries)
+    assert all("REQUEST = 2" in q and "PERIOD = 600" in q for q in history_queries)
+
+
+def test_interpolated_as_int_rounds_to_nullable_int():
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [
+        ("XV-101.STATE", "11-Jun-26 08:00:00.0", 2.0),
+        ("XV-101.STATE", "11-Jun-26 08:01:00.0", 2.9999999),  # float noise
+        ("FI-202.MODE", "11-Jun-26 08:01:00.0", 3.0),  # no 08:00 row -> gap
+    ])
+    df = ac.interpolated(["XV-101.STATE", "FI-202.MODE"],
+                         "2026-06-11 08:00", "2026-06-11 08:02",
+                         stepped=True, as_int=True)
+    assert all(str(dt) == "Int64" for dt in df.dtypes)
+    assert df["XV-101.STATE"].tolist() == [2, 3]
+    assert df["FI-202.MODE"].isna().iloc[0]  # gap stays <NA>, not 0
+    assert df["FI-202.MODE"].iloc[1] == 3
+
+
+def test_as_int_handles_decimal_values_from_odbc():
+    from decimal import Decimal
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [
+        ("XV-101.STATE", "11-Jun-26 08:00:00.0", Decimal("1.0")),
+    ])
+    df = ac.start_end(["XV-101.STATE"], "2026-06-11 08:00", "2026-06-11 09:00",
+                      as_int=True)
+    assert str(df["XV-101.STATE"].dtype) == "Int64"
+    assert df["XV-101.STATE"].iloc[0] == 1
+
+
+def test_current_as_int_and_empty_result():
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [])
+    df = ac.current(["XV-101.STATE"], mins=5, as_int=True)
+    assert df.empty
+
+
+def test_raw_pulls_request_actuals_by_default():
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [])
+    conn.queue(_history_desc(), [])
+    ac.start_end(["FI-101.PV"], "2026-06-11 08:00", "2026-06-11 09:00")
+    ac.current(["FI-101.PV"], mins=5)
+    history_queries = [q for q in conn.executed if "FROM HISTORY" in q]
+    assert len(history_queries) == 2
+    assert all("REQUEST = 4" in q for q in history_queries)
+    assert all("STEPPED" not in q for q in history_queries)
+
+
+def test_start_end_and_current_pass_stepped_through():
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [])
+    conn.queue(_history_desc(), [])
+    ac.start_end(["XV-101.STATE"], "2026-06-11 08:00", "2026-06-11 09:00",
+                 request=1, stepped=True)
+    ac.current(["XV-101.STATE"], mins=5, request=1, stepped=True)
+    history_queries = [q for q in conn.executed if "FROM HISTORY" in q]
+    assert all("REQUEST = 1" in q and "STEPPED = 1" in q for q in history_queries)
+
+
+def test_aggregates_stepped_clause():
+    ac, conn = make_conn()
+    conn.queue(["NAME", "TS", "AVG", "MIN", "MAX"], [])
+    conn.queue(["NAME", "TS", "AVG", "MIN", "MAX"], [])
+    ac.aggregates(["XV-101.STATE"], "2026-06-11 08:00", "2026-06-11 20:00")
+    ac.aggregates(["XV-101.STATE"], "2026-06-11 08:00", "2026-06-11 20:00",
+                  stepped=True)
+    agg_queries = [q for q in conn.executed if "FROM AGGREGATES" in q]
+    assert len(agg_queries) == 2
+    assert "STEPPED" not in agg_queries[0]
+    assert "STEPPED = 1" in agg_queries[1]
+
+
+def test_default_output_is_unchanged_floats():
+    ac, conn = make_conn()
+    conn.queue(_history_desc(), [
+        ("FI-101.PV", "11-Jun-26 08:00:00.0", 1.5),
+    ])
+    df = ac.interpolated(["FI-101.PV"], "2026-06-11 08:00", "2026-06-11 09:00")
+    assert df["FI-101.PV"].iloc[0] == 1.5
+
+
+# --------------------------------------------------------------------------- #
 # search_tags
 # --------------------------------------------------------------------------- #
 
