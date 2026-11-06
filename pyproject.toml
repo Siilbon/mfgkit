@@ -7,6 +7,8 @@ license = { file = "LICENSE" }
 dependencies = [
     "pandas>=2.0",
     "numpy",
+    "asyncua>=2.1.0",
+    "pytest>=9.1.1",
 ]
 
 [project.optional-dependencies]
@@ -18,8 +20,10 @@ sql = ["pyodbc"]
 # Logic-graph construction and interactive plotting.
 graph = ["networkx>=3.0", "plotly"]
 excel = ["xlsxwriter", "openpyxl"]
-all = ["mfgkit[aspen,sql,graph,excel]"]
-dev = ["mfgkit[graph,excel]", "pytest", "ipykernel"]
+# OPC UA client and practice server (mfgkit.opcua).
+opcua = ["asyncua>=1.1"]
+all = ["mfgkit[aspen,sql,graph,excel,opcua]"]
+dev = ["mfgkit[graph,excel,opcua]", "pytest", "ipykernel"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -30,3 +34,4 @@ include = ["mfgkit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]

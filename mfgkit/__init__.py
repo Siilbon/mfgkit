@@ -30,7 +30,7 @@ import importlib
 
 __version__ = "0.1.0"
 
-_SUBPACKAGES = ("analysis", "aspen", "deltav", "eventlog", "intellution", "plc", "utils")
+_SUBPACKAGES = ("analysis", "aspen", "deltav", "eventlog", "intellution", "plc", "utils", "opcua")
 
 __all__ = [*_SUBPACKAGES, "__version__"]
 
