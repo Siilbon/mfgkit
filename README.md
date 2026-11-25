@@ -12,6 +12,7 @@ single source of truth instead of vendoring their own drifting copies.
 | `mfgkit.plc`         | Allen-Bradley ControlLogix                | Tag CSVs, L5X rungs, logic graphs         |
 | `mfgkit.eventlog`    | DeltaV Event Chronicle, iFIX alarm ODBC   | Alarm and event tables in SQL databases   |
 | `mfgkit.analysis`    | *system-agnostic*                         | Downtime, ISA-18.2 alarm performance, operator interventions |
+| `mfgkit.dynamics`    | *system-agnostic*                         | FOPDT process models, simulated and fitted to output/PV data |
 
 Shared parsing helpers live in `mfgkit.utils`.
 
@@ -33,6 +34,7 @@ AspenTech SQLplus driver are Windows-only, so they are **not** base dependencies
 | `sql`   | `pyodbc`                | `mfgkit.eventlog` database connections          |
 | `graph` | `networkx`, `plotly`    | `mfgkit.plc.graph`, `deltav.em` SFC graphs     |
 | `excel` | `xlsxwriter`, `openpyxl`| `.to_excel()` on tags and rungs                |
+| `dynamics` | `scipy`, `plotly`    | `mfgkit.dynamics` fitting and plots (models need numpy only) |
 
 ## Usage
 
@@ -188,6 +190,46 @@ downtime_summary(df['F42103_PV'], threshold=125)
 
 `contiguous_runs(mask)` is exposed separately — it yields `(start, end)` labels
 for each True run in any boolean Series, not just downtime.
+
+### Process dynamics
+
+`mfgkit.dynamics` simulates process models from a recorded controller output
+and fits them to plant data. The controller output is treated as the process
+input, so it works on open-loop step tests and closed-loop trends alike.
+
+```python
+from mfgkit.dynamics import fit_self_regulating
+
+fit = fit_self_regulating(
+    df.index, df["TIC101.OUT"], df["TIC101.PV"],
+    pv_range=(0, 150),        # degC transmitter span
+    out_range=(0, 100),       # % output
+)
+fit.process_gain, fit.time_const, fit.dead_time   # %/%, s, s
+fit.model.plot(fit.pv_measured).show()            # model over data, one hover box
+```
+
+`SelfRegulating` is a first-order-plus-dead-time (FOPDT) model:
+
+    tau*dPV/dt + PV = PV_init + K*(OUT(t - theta) - OUT_init)
+
+| Parameter | Units | Meaning |
+|---|---|---|
+| `process_gain` | %/% | % of PV span per % of output span, the dimensionless gain used for tuning. Negative if more output lowers the PV |
+| `time_const` | s | Time to go 63% of the way once the PV starts moving |
+| `dead_time` | s | Time from an output change until the PV starts moving |
+| `pv_init` | EU | PV held at the starting output. The data should begin at steady state |
+| `pv_range`, `out_range` | EU | `(low, high)` spans, used to convert to % internally |
+
+It is a **local, linear** model around the starting operating point, not one
+that assumes 0% output gives 0 PV. Real processes are rarely linear across their
+whole range (a heater bottoms out at ambient, a valve's gain changes with
+opening), so fit it near where the plant actually runs.
+
+`time` may be seconds or historian timestamps. `p0=[K, tau, theta]` overrides
+the starting guess, and `bounds=(lower, upper)` the limits, if a fit lands
+somewhere implausible. Samples must not contain NaN, so drop downtime and gaps
+first (see `mask_downtime` above).
 
 ### Alarm and event logs
 

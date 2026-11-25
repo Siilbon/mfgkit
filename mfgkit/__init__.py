@@ -11,6 +11,7 @@ Plus system-agnostic helpers:
 
 - :mod:`mfgkit.eventlog`    alarm and event logs in SQL databases (DeltaV Event Chronicle, iFIX alarm ODBC)
 - :mod:`mfgkit.analysis`    downtime, ISA-18.2 alarm performance and operator interventions
+- :mod:`mfgkit.dynamics`    process models (FOPDT) simulated and fitted to output/PV data
 
 Shared parsing helpers live in :mod:`mfgkit.utils`.
 
@@ -30,7 +31,7 @@ import importlib
 
 __version__ = "0.1.0"
 
-_SUBPACKAGES = ("analysis", "aspen", "deltav", "eventlog", "intellution", "plc", "utils")
+_SUBPACKAGES = ("analysis", "aspen", "deltav", "dynamics", "eventlog", "intellution", "plc", "utils")
 
 __all__ = [*_SUBPACKAGES, "__version__"]
 
