@@ -12,7 +12,7 @@ single source of truth instead of vendoring their own drifting copies.
 | `mfgkit.plc`         | Allen-Bradley ControlLogix                | Tag CSVs, L5X rungs, logic graphs         |
 | `mfgkit.eventlog`    | DeltaV Event Chronicle, iFIX alarm ODBC   | Alarm and event tables in SQL databases   |
 | `mfgkit.analysis`    | *system-agnostic*                         | Downtime, ISA-18.2 alarm performance, operator interventions |
-| `mfgkit.dynamics`    | *system-agnostic*                         | FOPDT process models, simulated and fitted to output/PV data |
+| `mfgkit.dynamics`    | *system-agnostic*                         | Self-regulating (FOPDT) and integrating process models, fitted to output/PV data |
 
 Shared parsing helpers live in `mfgkit.utils`.
 
@@ -205,9 +205,26 @@ fit = fit_self_regulating(
     pv_range=(0, 150),        # degC transmitter span
     out_range=(0, 100),       # % output
 )
-fit.process_gain, fit.time_const, fit.dead_time   # %/%, s, s
-fit.model.plot(fit.pv_measured).show()            # model over data, one hover box
+fit.model.process_gain, fit.model.time_const, fit.model.dead_time   # %/%, s, s
+fit.plot().show()                                 # model over data, one hover box
 ```
+
+Every fit returns a `FitResult`. The fitted parameters live on its `model`;
+the rest describes how good the fit is:
+
+| Attribute | Meaning |
+|---|---|
+| `model` | The fitted `SelfRegulating` or `Integrating`, simulated over the data |
+| `params` | Fitted parameters as a dict, name -> value. Only those the fit adjusted |
+| `stderr` | Standard error of each fitted parameter, same keys. Large compared with the value means the data didn't pin it down |
+| `r2` | Fraction of the PV's variance the model explains |
+| `success`, `optimize` | Whether scipy converged, and its raw result |
+| `plot()` | The model over the measured PV |
+
+`params` makes tables across many fits a one-liner:
+`pd.DataFrame([f.params for f in fits])`.
+
+#### Self-regulating
 
 `SelfRegulating` is a first-order-plus-dead-time (FOPDT) model:
 
@@ -226,10 +243,55 @@ that assumes 0% output gives 0 PV. Real processes are rarely linear across their
 whole range (a heater bottoms out at ambient, a valve's gain changes with
 opening), so fit it near where the plant actually runs.
 
-`time` may be seconds or historian timestamps. `p0=[K, tau, theta]` overrides
-the starting guess, and `bounds=(lower, upper)` the limits, if a fit lands
-somewhere implausible. Samples must not contain NaN, so drop downtime and gaps
-first (see `mask_downtime` above).
+`p0=[K, tau, theta]` overrides the starting guess, and `bounds=(lower, upper)`
+the limits, if a fit lands somewhere implausible.
+
+#### Integrating
+
+A level is the classic integrating process: after an output change the PV
+doesn't settle, it ramps for as long as inflow and outflow are out of balance.
+
+    dPV/dt = Ki*(OUT(t - theta) - OUT_bal)        (in % of span)
+
+```python
+from mfgkit.dynamics import fit_integrating
+
+lvl = fit_integrating(
+    df.index, df["LIC201.OUT"], df["LIC201.PV"],
+    pv_range=(0, 4),          # m
+)
+lvl.params    # {"integrating_gain": ..., "dead_time": ..., "out_bal": ...}
+lvl.stderr
+```
+
+| Parameter | Units | Meaning |
+|---|---|---|
+| `integrating_gain` | 1/s | Ramp rate in %/s per % the output sits off balance. Negative if more output lowers the PV (e.g. a drain valve) |
+| `dead_time` | s | Time from an output change until the ramp changes |
+| `out_bal` | EU | The output at which the PV holds still: inflow = outflow |
+| `pv_init` | EU | PV at the start of the data |
+
+`out_bal` is **fitted by default**. It moves with production rate and
+conditions, so it says something about when the data was captured, and fixing it
+even half a percent wrong noticeably skews `integrating_gain` and `dead_time`.
+Pass `out_bal=` to fix it when you know it.
+
+Step-test a level with **pulses** (move the output, then put it back) rather
+than a held step, which would overflow or empty the tank. Pulses in both
+directions, or a setpoint change up and back down, separate `integrating_gain`
+from `out_bal`; check `stderr` if the output only moved one way. The fit
+assumes `out_bal` is constant over the window, so keep windows short compared
+with how often the load changes.
+
+If a fit returns a large `dead_time` with the wrong-sign gain, it has paired
+the wrong output move with the wrong ramp. Tighten the dead-time upper bound
+with `bounds=`.
+
+#### Data for either fit
+
+`time` may be seconds or historian timestamps. Samples must not contain NaN,
+so drop downtime and gaps first (see `mask_downtime` above). Fit near the
+range the plant actually runs in; both models are linear.
 
 ### Alarm and event logs
 

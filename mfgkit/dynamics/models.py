@@ -170,3 +170,95 @@ class SelfRegulating:
             yaxis2={"title_text": "Output", "domain": [0.0, 0.47]},
         )
         return fig
+
+
+class Integrating:
+    """Integrating process: dPV/dt = Ki*(OUT(t - theta) - OUT_bal), in %.
+
+    Inputs and outputs are in engineering units; integrating_gain is in
+    (%/s)/% = 1/s. out_bal is the output (EU) at which the PV holds still;
+    None means out_series[0], i.e. the data starts with the PV steady.
+    """
+
+    def __init__(
+        self,
+        time_series,
+        out_series,
+        pv_init,
+        integrating_gain,
+        dead_time,
+        out_bal=None,
+        pv_range=(0.0, 100.0),
+        out_range=(0.0, 100.0),
+    ) -> None:
+        self.time_series = np.asarray(time_series, dtype=np.float64)
+        self.out_series = np.asarray(out_series, dtype=np.float64)
+        self.pv_init = pv_init
+        self.integrating_gain = integrating_gain
+        self.dead_time = dead_time
+        self.out_bal = self.out_series[0] if out_bal is None else out_bal
+        self.pv_range = pv_range
+        self.out_range = out_range
+        self.pv = self._simulate()
+
+    def _simulate(self):
+        out_pct = to_pct(self.out_series, self.out_range)
+        out_bal_pct = to_pct(self.out_bal, self.out_range)
+        out_delayed = delayed(self.time_series, out_pct, self.dead_time)
+        pv_init_pct = to_pct(self.pv_init, self.pv_range)
+
+        pv = np.empty_like(self.time_series)
+        pv[0] = pv_init_pct
+        for k in range(len(self.time_series) - 1):
+            pv[k + 1] = pv[k] + self.integrating_gain * (
+                out_delayed[k] - out_bal_pct
+            ) * (self.time_series[k + 1] - self.time_series[k])
+
+        return to_eu(pv, self.pv_range)
+
+    def plot(self, pv_measured=None):
+        """PV over output, sharing one hover box. Needs ``mfgkit[dynamics]``.
+
+        Pass ``pv_measured`` (same length as the time series) to overlay the
+        data the model was fitted to.
+        """
+        import plotly.graph_objects as go
+
+        fig = go.Figure()
+
+        if pv_measured is not None:
+            fig.add_trace(
+                go.Scatter(
+                    x=self.time_series,
+                    y=np.asarray(pv_measured, dtype=np.float64),
+                    mode="markers",
+                    marker_size=3,
+                    name="PV measured",
+                )
+            )
+
+        fig.add_trace(
+            go.Scatter(x=self.time_series, y=self.pv, mode="lines", name="PV")
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=self.time_series,
+                y=self.out_series,
+                mode="lines",
+                name="Output",
+                yaxis="y2",
+            )
+        )
+        fig.update_layout(
+            title=(
+                f"Integrating: Ki={self.integrating_gain:.3g} 1/s, "
+                f"theta={self.dead_time:.3g} s, out_bal={self.out_bal:.3g}"
+            ),
+            height=500,
+            hovermode="x unified",
+            hoversubplots="axis",
+            xaxis={"title_text": "time (s)", "anchor": "y2"},
+            yaxis={"title_text": "PV", "domain": [0.53, 1.0]},
+            yaxis2={"title_text": "Output", "domain": [0.0, 0.47]},
+        )
+        return fig
