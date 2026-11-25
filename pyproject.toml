@@ -18,8 +18,10 @@ sql = ["pyodbc"]
 # Logic-graph construction and interactive plotting.
 graph = ["networkx>=3.0", "plotly"]
 excel = ["xlsxwriter", "openpyxl"]
-all = ["mfgkit[aspen,sql,graph,excel]"]
-dev = ["mfgkit[graph,excel]", "pytest", "ipykernel"]
+# Process-model fitting and plots (mfgkit.dynamics); the models need numpy only.
+dynamics = ["scipy", "plotly"]
+all = ["mfgkit[aspen,sql,graph,excel,dynamics]"]
+dev = ["mfgkit[graph,excel,dynamics]", "pytest", "ipykernel"]
 
 [build-system]
 requires = ["setuptools>=68"]
